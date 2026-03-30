@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package goim.protocol;
+
+/*
+ * v1.0.0
+ * protocol
+ */
+message Proto {
+    string packId = 1;
+    string app = 2;
+    string business = 3;
+    int32 command = 4;
+    int64 timestamp = 5;
+    int32 version = 6;
+    bytes body = 7;
+}

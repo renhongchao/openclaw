@@ -1,0 +1,56 @@
+{
+  "name": "@openclaw/bee-im",
+  "version": "1.0.0",
+  "description": "小蜜蜂 IM WebSocket Channel 插件 - OpenClaw 消息通道",
+  "keywords": [
+    "bee-im",
+    "channel",
+    "im",
+    "messaging",
+    "openclaw",
+    "plugin",
+    "websocket"
+  ],
+  "license": "MIT",
+  "author": "",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.32.35",
+    "protobufjs": "^7.2.5",
+    "uuid": "^9.0.0",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/uuid": "^9.0.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
+  },
+  "peerDependencies": {
+    "openclaw": "*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "channel": {
+      "id": "bee-im",
+      "label": "BeeIM",
+      "selectionLabel": "BeeIM (小蜜蜂 IM)",
+      "docsPath": "/channels/bee-im",
+      "docsLabel": "bee-im",
+      "blurb": "小蜜蜂 IM WebSocket 消息通道",
+      "order": 80,
+      "quickstartAllowFrom": true
+    }
+  }
+}
