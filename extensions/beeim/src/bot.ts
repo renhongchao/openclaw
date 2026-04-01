@@ -99,7 +99,8 @@ function extractMessageContent(message: BeeimMessageEvent): string {
  */
 export function parseBeeimMessageEvent(message: BeeimMessageEvent): BeeimMessageContext {
   const isDirectMessage = message.sessionType === "p2p";
-  const sessionId = isDirectMessage ? `p2p-${message.from}` : `team-${message.to}`;
+  const sessionCore = isDirectMessage ? `p2p-${message.from}` : `team-${message.to}`;
+  const sessionId = `agent:beebot:${sessionCore}`;
 
   return {
     id: message.clientMsgId,
