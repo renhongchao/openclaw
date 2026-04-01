@@ -188,6 +188,11 @@ export async function createBeeimClient(cfg: BeeimInstanceConfig): Promise<Beeim
   messageCallbacks.set(cacheKey, msgCallbackSet);
   connectionCallbacks.set(cacheKey, connCallbackSet);
 
+  // Gate that opens once the SDK's initial offline-message sync completes.
+  // Until then, onReceiveMessages carries offline backlog — we skip it.
+  let syncFinished = false;
+  let offlineDropped = 0;
+
   // 获取服务引用
   const loginService = nim.V2NIMLoginService;
   const messageService = nim.V2NIMMessageService;
@@ -238,8 +243,34 @@ export async function createBeeimClient(cfg: BeeimInstanceConfig): Promise<Beeim
     throw new Error("BeeIM SDK V2 services not available");
   }
 
+  // Offline message batch — logged and dropped, not dispatched to handlers.
+  messageService.on("onReceiveOfflineMessages", (messages: any[]) => {
+    console.log(`[beeim] offline messages received — count: ${messages.length} (skipped)`);
+    offlineDropped += messages.length;
+  });
+
+  // Sync completion — from this point onReceiveMessages carries live messages only.
+  loginService.on("onDataSync", (type: number, state: number, error: any) => {
+    // V2NIMDataSyncState: 2 = complete
+    if (state === 2) {
+      if (!syncFinished) {
+        syncFinished = true;
+        console.log(
+          `[beeim] sync finished — ready for live messages, offline messages dropped: ${offlineDropped}`,
+        );
+      }
+    }
+  });
+
   // 注册消息接收回调
   messageService.on("onReceiveMessages", (messages: any[]) => {
+    if (!syncFinished) {
+      console.log(
+        `[beeim] onReceiveMessages before sync — dropping ${messages.length} message(s) (offline backlog)`,
+      );
+      offlineDropped += messages.length;
+      return;
+    }
     console.log(`[beeim] received messages — count: ${messages.length}`);
     for (const msg of messages) {
       const event = convertV2ToMessageEvent(msg);
@@ -295,6 +326,9 @@ export async function createBeeimClient(cfg: BeeimInstanceConfig): Promise<Beeim
     },
 
     async login(): Promise<boolean> {
+      // Re-arm the sync gate each time login is called (reconnect scenario).
+      syncFinished = false;
+      offlineDropped = 0;
       try {
         const legacyLogin = cfg.advanced?.legacyLogin ?? false;
         const aiBotValue = legacyLogin ? 0 : 2;
