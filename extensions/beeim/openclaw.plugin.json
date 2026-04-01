@@ -1,0 +1,9 @@
+{
+  "id": "beeim",
+  "channels": ["beeim"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
