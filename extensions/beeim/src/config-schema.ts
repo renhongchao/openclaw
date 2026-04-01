@@ -99,7 +99,7 @@ export const BeeimInstanceConfigSchema = z.object({
    * Shorthand credential: "appKey-accid-token" (3 segments separated by `-`).
    * When present and valid, takes priority over individual appKey/account/token fields.
    */
-  nimToken: z.string().optional(),
+  beeImToken: z.string().optional(),
 
   /** NIM App Key (coerced from number if needed) */
   appKey: coerceToString.optional(),
@@ -132,8 +132,8 @@ const BeeimInstancesArraySchema = z
     for (let i = 0; i < instances.length; i++) {
       const inst = instances[i];
       let key: string | null = null;
-      if (inst.nimToken) {
-        const parts = inst.nimToken.split("-");
+      if (inst.beeImToken) {
+        const parts = inst.beeImToken.split("-");
         if (parts.length === 3) {
           key = `${parts[0].trim()}:${parts[1].trim()}`;
         }

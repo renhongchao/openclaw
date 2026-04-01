@@ -25,14 +25,14 @@ function coerceToString(value: unknown): string {
 }
 
 /**
- * Parse the shorthand nimToken field ("appKey-accid-token").
+ * Parse the shorthand beeImToken field ("appKey-accid-token").
  * Returns the three credential parts, or null if the format is invalid.
  */
 function parseNimToken(
-  nimToken: string | undefined,
+  beeImToken: string | undefined,
 ): { appKey: string; account: string; token: string } | null {
-  if (!nimToken) return null;
-  const parts = nimToken.split("-");
+  if (!beeImToken) return null;
+  const parts = beeImToken.split("-");
   if (parts.length !== 3) return null;
   const [appKey, account, token] = parts.map((p) => p.trim());
   if (!appKey || !account || !token) return null;
@@ -41,14 +41,14 @@ function parseNimToken(
 
 /**
  * Resolve BeeIM credentials from a single instance configuration.
- * Priority: nimToken (shorthand) > individual appKey/account/token fields.
+ * Priority: beeImToken (shorthand) > individual appKey/account/token fields.
  * Returns null if required credentials are missing.
  */
 export function resolveBeeimCredentials(
   cfg: BeeimInstanceConfig | undefined,
 ): { appKey: string; account: string; token: string } | null {
-  // 1. Try nimToken shorthand first
-  const fromToken = parseNimToken(cfg?.nimToken);
+  // 1. Try beeImToken shorthand first
+  const fromToken = parseNimToken(cfg?.beeImToken);
   if (fromToken) {
     return fromToken;
   }

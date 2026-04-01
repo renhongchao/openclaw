@@ -73,7 +73,7 @@ export const beeimPlugin: ChannelPlugin<ResolvedBeeimAccount> = {
             additionalProperties: false,
             properties: {
               enabled: { type: "boolean" },
-              nimToken: { type: "string" },
+              beeImToken: { type: "string" },
               appKey: { type: "string" },
               account: { type: "string" },
               token: { type: "string" },

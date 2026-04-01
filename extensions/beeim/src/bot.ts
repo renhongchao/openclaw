@@ -488,9 +488,6 @@ export async function handleBeeimMessage(params: {
           log(`[beeim] reply skipped by normalizer — kind: ${info.kind}, reason: ${info.reason}`);
         },
       },
-      replyOptions: {
-        targetId: effectiveSenderId,
-      },
     });
 
     log(`[beeim] dispatch complete`);
