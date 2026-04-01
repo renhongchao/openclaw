@@ -263,6 +263,9 @@ export async function createBeeimClient(cfg: BeeimInstanceConfig): Promise<Beeim
   });
 
   // 注册消息接收回调
+  // Dedup set: tracks msgIds seen in the current session to avoid processing
+  // the same message twice (SDK occasionally delivers duplicates in one batch).
+  const recentMsgIds = new Set<string>();
   messageService.on("onReceiveMessages", (messages: any[]) => {
     if (!syncFinished) {
       console.log(
@@ -274,6 +277,18 @@ export async function createBeeimClient(cfg: BeeimInstanceConfig): Promise<Beeim
     console.log(`[beeim] received messages — count: ${messages.length}`);
     for (const msg of messages) {
       const event = convertV2ToMessageEvent(msg);
+      const dedupKey = event.msgId || event.clientMsgId;
+      if (dedupKey && recentMsgIds.has(dedupKey)) {
+        console.log(`[beeim] duplicate message dropped — id: ${dedupKey}`);
+        continue;
+      }
+      if (dedupKey) {
+        recentMsgIds.add(dedupKey);
+        // Keep the set bounded to the last 200 ids.
+        if (recentMsgIds.size > 200) {
+          recentMsgIds.delete(recentMsgIds.values().next().value!);
+        }
+      }
       console.log(
         `[beeim] received message — sender: ${event.from}, type: ${event.type}, session: ${event.sessionType}, target: ${event.to}, message id: ${event.msgId}, timestamp: ${event.time}`,
       );

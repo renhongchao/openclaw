@@ -144,14 +144,21 @@ export async function handleBeeimMessage(params: {
     return;
   }
 
-  // For team messages, only process when forcePushAccountIds includes the bot
+  // For team messages, only process when:
+  //   a) it's a custom message (type=100) — these don't use NIM's force-push @ mechanism, or
+  //   b) the bot's accid is in forcePushAccountIds (i.e. bot was @-mentioned)
   if (isTeam) {
-    const forcePushIds = message.forcePushAccountIds ?? [];
-    if (!forcePushIds.includes(botAccount)) {
-      log(`[beeim] ignoring team message — reason: bot not in force-push list`);
-      return;
+    const isCustom = message.type === "custom" || (message.type as any) === 100;
+    if (!isCustom) {
+      const forcePushIds = message.forcePushAccountIds ?? [];
+      if (!forcePushIds.includes(botAccount)) {
+        log(`[beeim] ignoring team message — reason: bot not @-mentioned`);
+        return;
+      }
+      log(`[beeim] team message accepted — reason: bot @-mentioned`);
+    } else {
+      log(`[beeim] team custom message accepted — reason: custom messages bypass force-push check`);
     }
-    log(`[beeim] team message accepted — reason: bot in force-push list`);
   }
 
   const ctx = parseBeeimMessageEvent(message);
