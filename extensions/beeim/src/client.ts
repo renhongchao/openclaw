@@ -4,6 +4,7 @@
  * 使用网易云信 IM Bot SDK (@yxim/nim-bot)
  */
 
+import { randomUUID } from "crypto";
 import { resolveBeeimCredentials, isBeeimP2pAllowed } from "./accounts.js";
 import type {
   BeeimInstanceConfig,
@@ -385,39 +386,50 @@ export async function createBeeimClient(cfg: BeeimInstanceConfig): Promise<Beeim
       text: string,
       sessionType: BeeimSessionType = "p2p",
     ): Promise<BeeimSendResult> {
-      try {
-        const message = messageCreator?.createTextMessage(text);
-        if (!message) {
-          return { success: false, error: "Failed to create text message" };
+      const clientMsgId = randomUUID().replace(/-/g, "");
+      const conversationId = buildConversationId(nim, to, sessionType);
+
+      const attempt = async (retry: boolean): Promise<BeeimSendResult> => {
+        try {
+          const message = messageCreator?.createTextMessage(text);
+          if (!message) {
+            return { success: false, error: "Failed to create text message" };
+          }
+          message.messageClientId = clientMsgId;
+
+          console.log(
+            `[beeim] sending text — target: ${conversationId}, session: ${sessionType}, length: ${text.length}, clientMsgId: ${clientMsgId}${retry ? " (retry)" : ""}`,
+          );
+
+          const result = await messageService.sendMessage(message, conversationId, {
+            antispamConfig: {
+              antispamEnabled: cfg.antispamEnabled ?? true,
+            },
+          });
+
+          console.log(
+            `[beeim] text sent — message id: ${result.message?.messageServerId ?? "unknown"}, clientMsgId: ${clientMsgId}`,
+          );
+          return {
+            success: true,
+            msgId: result.message?.messageServerId,
+            clientMsgId: result.message?.messageClientId,
+          };
+        } catch (error: any) {
+          const errorMessage = error?.message ?? error?.desc ?? String(error);
+          const errorCode = error?.code ?? error?.res_code;
+          console.error(
+            `[beeim] text send failed — error: ${errorMessage}${errorCode ? ` (code: ${errorCode})` : ""}, clientMsgId: ${clientMsgId}${retry ? " (retry)" : ""}`,
+          );
+          return { success: false, error: error.message || String(error), errorCode };
         }
+      };
 
-        const conversationId = buildConversationId(nim, to, sessionType);
-        console.log(
-          `[beeim] sending text — target: ${conversationId}, session: ${sessionType}, length: ${text.length}`,
-        );
+      const first = await attempt(false);
+      if (first.success) return first;
 
-        const result = await messageService.sendMessage(message, conversationId, {
-          antispamConfig: {
-            antispamEnabled: cfg.antispamEnabled ?? true,
-          },
-        });
-
-        console.log(
-          `[beeim] text sent — message id: ${result.message?.messageServerId ?? "unknown"}`,
-        );
-        return {
-          success: true,
-          msgId: result.message?.messageServerId,
-          clientMsgId: result.message?.messageClientId,
-        };
-      } catch (error: any) {
-        const errorMessage = error?.message ?? error?.desc ?? String(error);
-        const errorCode = error?.code ?? error?.res_code;
-        console.error(
-          `[beeim] text send failed — error: ${errorMessage}${errorCode ? ` (code: ${errorCode})` : ""}`,
-        );
-        return { success: false, error: error.message || String(error) };
-      }
+      console.log(`[beeim] retrying text send — clientMsgId: ${clientMsgId}`);
+      return attempt(true);
     },
 
     async sendImage(
@@ -571,50 +583,66 @@ export async function createBeeimClient(cfg: BeeimInstanceConfig): Promise<Beeim
       forcePushAccountIds: string[],
       sessionType: BeeimSessionType = "p2p",
     ): Promise<BeeimSendResult> {
-      try {
-        const replyMsg = messageCreator?.createTextMessage(text);
-        if (!replyMsg) {
+      const clientMsgId = randomUUID().replace(/-/g, "");
+      const conversationId = buildConversationId(nim, to, sessionType);
+
+      const sendParams = {
+        pushConfig: {
+          forcePush: true,
+          forcePushAccountIds,
+        },
+        antispamConfig: {
+          antispamEnabled: cfg.antispamEnabled ?? true,
+        },
+      };
+
+      const attempt = async (retry: boolean): Promise<BeeimSendResult> => {
+        try {
+          const replyMsg = messageCreator?.createTextMessage(text);
+          if (!replyMsg) {
+            return {
+              success: false,
+              error: "Failed to create reply text message",
+            };
+          }
+          replyMsg.messageClientId = clientMsgId;
+
+          console.log(
+            `[beeim] sending reply — target: ${conversationId}, session: ${sessionType}, force-push: [${forcePushAccountIds.join(", ")}], clientMsgId: ${clientMsgId}${retry ? " (retry)" : ""}`,
+          );
+
+          const result = await messageService.replyMessage(
+            replyMsg,
+            originalMsg as any,
+            sendParams,
+          );
+          console.log(
+            `[beeim] reply sent — message id: ${result.message?.messageServerId ?? "unknown"}, clientMsgId: ${clientMsgId}`,
+          );
+          return {
+            success: true,
+            msgId: result.message?.messageServerId,
+            clientMsgId: result.message?.messageClientId,
+          };
+        } catch (error: any) {
+          const errorMessage = error?.message ?? error?.desc ?? String(error);
+          const errorCode = error?.code ?? error?.res_code;
+          console.error(
+            `[beeim] reply failed — error: ${errorMessage}${errorCode ? ` (code: ${errorCode})` : ""}, clientMsgId: ${clientMsgId}${retry ? " (retry)" : ""}`,
+          );
           return {
             success: false,
-            error: "Failed to create reply text message",
+            error: error.message || error.desc || String(error),
+            errorCode,
           };
         }
+      };
 
-        const sendParams = {
-          pushConfig: {
-            forcePush: true,
-            forcePushAccountIds,
-          },
-          antispamConfig: {
-            antispamEnabled: cfg.antispamEnabled ?? true,
-          },
-        };
+      const first = await attempt(false);
+      if (first.success) return first;
 
-        const conversationId = buildConversationId(nim, to, sessionType);
-        console.log(
-          `[beeim] sending reply — target: ${conversationId}, session: ${sessionType}, force-push: [${forcePushAccountIds.join(", ")}]`,
-        );
-
-        const result = await messageService.replyMessage(replyMsg, originalMsg as any, sendParams);
-        console.log(
-          `[beeim] reply sent — message id: ${result.message?.messageServerId ?? "unknown"}`,
-        );
-        return {
-          success: true,
-          msgId: result.message?.messageServerId,
-          clientMsgId: result.message?.messageClientId,
-        };
-      } catch (error: any) {
-        const errorMessage = error?.message ?? error?.desc ?? String(error);
-        const errorCode = error?.code ?? error?.res_code;
-        console.error(
-          `[beeim] reply failed — error: ${errorMessage}${errorCode ? ` (code: ${errorCode})` : ""}`,
-        );
-        return {
-          success: false,
-          error: error.message || error.desc || String(error),
-        };
-      }
+      console.log(`[beeim] retrying reply send — clientMsgId: ${clientMsgId}`);
+      return attempt(true);
     },
 
     async sendStreamMessage(params: {
