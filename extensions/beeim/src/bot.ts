@@ -1,4 +1,15 @@
 import { type OpenClawConfig, type RuntimeEnv } from "openclaw/plugin-sdk";
+import {
+  formatInboundEnvelope,
+  resolveEnvelopeFormatOptions,
+} from "openclaw/plugin-sdk/channel-inbound";
+import {
+  type HistoryEntry,
+  DEFAULT_GROUP_HISTORY_LIMIT,
+  recordPendingHistoryEntryIfEnabled,
+  buildPendingHistoryContextFromMap,
+  clearHistoryEntriesIfEnabled,
+} from "openclaw/plugin-sdk/reply-history";
 import { isBeeimP2pAllowed, isBeeimTeamAllowed } from "./accounts.js";
 import { getCachedBeeimClient } from "./client.js";
 import {
@@ -128,8 +139,10 @@ export async function handleBeeimMessage(params: {
   accountId: string;
   message: BeeimMessageEvent;
   runtime?: RuntimeEnv;
+  /** Shared in-memory group history map (maintained per monitor connection). */
+  groupHistories?: Map<string, HistoryEntry[]>;
 }): Promise<void> {
-  const { cfg, accountId, message, runtime } = params;
+  const { cfg, accountId, message, runtime, groupHistories } = params;
   const { resolveBeeimAccountById } = await import("./accounts.js");
   const account = resolveBeeimAccountById({ cfg, accountId });
   const nimCfg = account.configured ? account.config : undefined;
@@ -148,37 +161,53 @@ export async function handleBeeimMessage(params: {
   // For team messages, only process when the bot is @-mentioned.
   //   a) Normal NIM messages: check forcePushAccountIds for bot accid.
   //   b) Custom messages (type=100): check atUsers passports against configured botPassport.
+  // Non-mentioned messages are silently ingested into group history for context.
+  const historyKey = isTeam ? `team-${message.to}` : "";
+  const historyLimit = DEFAULT_GROUP_HISTORY_LIMIT;
+  let botMentioned = false;
+
   if (isTeam) {
     const isCustom = message.type === "custom" || (message.type as any) === 100;
     if (!isCustom) {
       const forcePushIds = message.forcePushAccountIds ?? [];
-      if (!forcePushIds.includes(botAccount)) {
-        log(`[beeim] ignoring team message — reason: bot not @-mentioned`);
-        return;
-      }
-      log(`[beeim] team message accepted — reason: bot @-mentioned`);
+      botMentioned = forcePushIds.includes(botAccount);
     } else {
-      // Custom messages use atUsers.passport instead of forcePushAccountIds.
-      // When botPassport is configured, require an explicit @-mention.
       const botPassport = nimCfg?.botPassport?.toLowerCase();
       if (botPassport) {
         const earlyParsed = parseCustomMessage(message);
-        const mentioned = earlyParsed?.atPassports?.includes(botPassport) ?? false;
-        if (!mentioned) {
-          log(
-            `[beeim] ignoring team custom message — reason: bot not @-mentioned (botPassport: ${botPassport})`,
-          );
-          return;
-        }
-        log(
-          `[beeim] team custom message accepted — reason: bot @-mentioned via atUsers (botPassport: ${botPassport})`,
-        );
+        botMentioned = earlyParsed?.atPassports?.includes(botPassport) ?? false;
       } else {
+        // No botPassport configured — cannot detect @-mention, bypass check.
+        botMentioned = true;
         log(
           `[beeim] team custom message accepted — reason: no botPassport configured, bypassing @-mention check`,
         );
       }
     }
+
+    if (!botMentioned) {
+      // Silent ingest: store message for group context without triggering a reply.
+      const ctx = parseBeeimMessageEvent(message);
+      if (groupHistories) {
+        recordPendingHistoryEntryIfEnabled({
+          historyMap: groupHistories,
+          historyKey,
+          limit: historyLimit,
+          entry: {
+            sender: message.fromNick || ctx.senderId,
+            body: ctx.text,
+            timestamp: ctx.timestamp,
+            messageId: ctx.id,
+          },
+        });
+      }
+      log(
+        `[beeim] team message silently ingested — sender: ${ctx.senderId}, historyKey: ${historyKey}`,
+      );
+      return;
+    }
+
+    log(`[beeim] team message accepted — reason: bot @-mentioned`);
   }
 
   const ctx = parseBeeimMessageEvent(message);
@@ -343,11 +372,47 @@ export async function handleBeeimMessage(params: {
       sessionKey: route.sessionKey,
       contextKey: `beeim:message:${ctx.sessionId}:${ctx.id}`,
     });
+
+    // ── Group history injection ──
+    // When the bot is @-mentioned in a group, prepend silently collected
+    // messages so the agent has conversational context.
+    const envelopeOptions = resolveEnvelopeFormatOptions(cfg);
+    let bodyWithHistory = ctx.text;
+    const inboundHistory: Array<{ sender: string; body: string; timestamp?: number }> = [];
+
+    if (isTeam && groupHistories && historyKey && historyLimit > 0) {
+      const pending = groupHistories.get(historyKey) ?? [];
+      for (const entry of pending) {
+        inboundHistory.push({
+          sender: entry.sender,
+          body: entry.body,
+          timestamp: entry.timestamp,
+        });
+      }
+      bodyWithHistory = buildPendingHistoryContextFromMap({
+        historyMap: groupHistories,
+        historyKey,
+        limit: historyLimit,
+        currentMessage: ctx.text,
+        formatEntry: (entry) =>
+          formatInboundEnvelope({
+            channel: "BeeIM",
+            from: teamName ?? `group:${message.to}`,
+            timestamp: entry.timestamp,
+            body: entry.body,
+            chatType: "group",
+            senderLabel: entry.sender,
+            envelope: envelopeOptions,
+          }),
+      });
+    }
+
     //@ts-ignore
     const ctxPayload = core.channel.reply.finalizeInboundContext({
-      Body: ctx.text,
+      Body: bodyWithHistory,
       RawBody: ctx.text,
       CommandBody: ctx.text,
+      ...(inboundHistory.length > 0 ? { InboundHistory: inboundHistory } : {}),
       From: beeimFrom,
       To: beeimTo,
       SessionKey: route.sessionKey,
@@ -533,6 +598,16 @@ export async function handleBeeimMessage(params: {
     });
 
     log(`[beeim] dispatch complete`);
+
+    // ── Clear group history after successful dispatch ──
+    if (isTeam && groupHistories && historyKey && historyLimit > 0) {
+      clearHistoryEntriesIfEnabled({
+        historyMap: groupHistories,
+        historyKey,
+        limit: historyLimit,
+      });
+      log(`[beeim] group history cleared — historyKey: ${historyKey}`);
+    }
   } catch (err) {
     error(`[beeim] dispatch failed — error: ${String(err)}`);
     if (err instanceof Error && err.stack) {

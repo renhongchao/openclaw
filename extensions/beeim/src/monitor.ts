@@ -3,6 +3,7 @@
  */
 
 import type { OpenClawConfig, RuntimeEnv } from "openclaw/plugin-sdk";
+import type { HistoryEntry } from "openclaw/plugin-sdk/reply-history";
 import { resolveBeeimCredentials, resolveBeeimAccountById } from "./accounts.js";
 import { handleBeeimMessage } from "./bot.js";
 import { createBeeimClient, clearBeeimClientCache } from "./client.js";
@@ -18,6 +19,8 @@ interface MonitorState {
   client: BeeimClientInstance;
   running: boolean;
   abortController: AbortController;
+  /** In-memory group chat history for silent ingest (per group ID). */
+  groupHistories: Map<string, HistoryEntry[]>;
 }
 
 /** 监控状态缓存 */
@@ -85,10 +88,12 @@ export async function monitorBeeimProvider(params: {
     const abortController = new AbortController();
 
     // 保存监控状态
+    const groupHistories = new Map<string, HistoryEntry[]>();
     const state: MonitorState = {
       client,
       running: true,
       abortController,
+      groupHistories,
     };
     monitorStates.set(monitorKey, state);
 
@@ -111,6 +116,7 @@ export async function monitorBeeimProvider(params: {
           accountId: params.accountId,
           runtime,
           message: msg,
+          groupHistories,
         });
       } catch (error) {
         const errorMessage = (error as any)?.message ?? String(error);
