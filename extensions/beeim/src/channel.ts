@@ -77,6 +77,7 @@ export const beeimPlugin: ChannelPlugin<ResolvedBeeimAccount> = {
               appKey: { type: "string" },
               account: { type: "string" },
               token: { type: "string" },
+              botPassport: { type: "string" },
               p2p: {
                 type: "object",
                 additionalProperties: false,
@@ -131,6 +132,7 @@ export const beeimPlugin: ChannelPlugin<ResolvedBeeimAccount> = {
       appKey: { label: "App Key" },
       account: { label: "Account ID" },
       token: { label: "Token", sensitive: true },
+      botPassport: { label: "Bot Passport (群聊@识别)" },
       p2p: { label: "P2P" },
       "p2p.policy": { label: "Message Policy" },
       "p2p.allowFrom": { label: "Account Allowlist" },
