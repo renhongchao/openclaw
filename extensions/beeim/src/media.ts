@@ -155,19 +155,32 @@ export async function sendVideoBeeim(params: {
 
 /**
  * 从媒体信息列表构建 payload
+ *
+ * Uses the standard MediaPath/MediaUrl/MediaPaths/MediaUrls keys so the core
+ * media-understanding pipeline (normalizeAttachments) picks them up correctly.
+ * localPath is preferred over the remote CDN URL when available.
  */
 export function buildBeeimMediaPayload(mediaList: BeeimMediaInfo[]): Record<string, unknown> {
   if (!mediaList || mediaList.length === 0) {
     return {};
   }
 
+  if (mediaList.length === 1) {
+    const m = mediaList[0]!;
+    const effectivePath = m.localPath || undefined;
+    const effectiveUrl = m.url || undefined;
+    return {
+      ...(effectivePath ? { MediaPath: effectivePath } : {}),
+      ...(effectiveUrl ? { MediaUrl: effectiveUrl } : {}),
+    };
+  }
+
+  const paths = mediaList.map((m) => m.localPath ?? "");
+  const urls = mediaList.map((m) => m.url ?? "");
+  const hasPaths = paths.some(Boolean);
   return {
-    MediaAttachments: mediaList.map((m) => ({
-      type: m.type,
-      url: m.url,
-      name: m.name,
-      size: m.size,
-    })),
+    ...(hasPaths ? { MediaPaths: paths } : {}),
+    MediaUrls: urls,
   };
 }
 

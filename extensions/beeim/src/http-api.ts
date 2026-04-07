@@ -191,6 +191,7 @@ export async function sendBeeMessage(
   appKey: string,
   accid: string,
   token: string,
+  isGroup: boolean = false,
   isRetry: boolean = false,
 ): Promise<void> {
   if (!appKey || !accid || !token) {
@@ -213,13 +214,14 @@ export async function sendBeeMessage(
     const chunk = chunks[i];
 
     // send API payload — appKey 字段使用 accid（与 token 认证保持一致）
+    // 群聊用 chatType: "group" + to 键；单聊用 chatType: "single" + chatId 键
     const payload = {
       from: BEE_API_CONFIG.FIXED_HTTP_FROM,
       appKey: accid,
       accessToken: accessToken,
-      chatType: "single",
+      chatType: isGroup ? "group" : "single",
       msgType: "text",
-      chatId: chatId,
+      ...(isGroup ? { to: chatId } : { chatId: chatId }),
       content: JSON.stringify({ text: chunk }),
     };
 
@@ -236,7 +238,7 @@ export async function sendBeeMessage(
           accessToken: payload.accessToken ? `${payload.accessToken.substring(0, 8)}****` : "(空)",
           chatType: payload.chatType,
           msgType: payload.msgType,
-          chatId: payload.chatId,
+          ...(isGroup ? { to: chatId } : { chatId: chatId }),
           content: chunk.length > 100 ? chunk.substring(0, 100) + "..." : chunk,
           chunkLength: chunk.length,
         },
@@ -284,7 +286,7 @@ export async function sendBeeMessage(
         // 清除 token 并重试整个发送
         console.log("[beeim] 清除 token 并重试...");
         clearAccessToken(accid);
-        await sendBeeMessage(chatId, text, appKey, accid, token, true);
+        await sendBeeMessage(chatId, text, appKey, accid, token, isGroup, true);
         return; // 成功重试后返回
       }
 

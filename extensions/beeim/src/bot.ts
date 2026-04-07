@@ -87,8 +87,9 @@ function extractMessageContent(message: BeeimMessageEvent): string {
 
   if (["image", "file", "audio", "video"].includes(message.type)) {
     const placeholder = inferMediaPlaceholder(message.type);
-    const url = message.attach?.url;
-    return url ? `${placeholder} ${url}` : placeholder;
+    // Do not embed the remote CDN URL in the body text; the media pipeline
+    // provides the downloaded local path via MediaPath/MediaUrl instead.
+    return placeholder;
   }
 
   return message.text || "";
@@ -144,9 +145,9 @@ export async function handleBeeimMessage(params: {
     return;
   }
 
-  // For team messages, only process when:
-  //   a) it's a custom message (type=100) — these don't use NIM's force-push @ mechanism, or
-  //   b) the bot's accid is in forcePushAccountIds (i.e. bot was @-mentioned)
+  // For team messages, only process when the bot is @-mentioned.
+  //   a) Normal NIM messages: check forcePushAccountIds for bot accid.
+  //   b) Custom messages (type=100): check atUsers passports against configured botPassport.
   if (isTeam) {
     const isCustom = message.type === "custom" || (message.type as any) === 100;
     if (!isCustom) {
@@ -157,7 +158,26 @@ export async function handleBeeimMessage(params: {
       }
       log(`[beeim] team message accepted — reason: bot @-mentioned`);
     } else {
-      log(`[beeim] team custom message accepted — reason: custom messages bypass force-push check`);
+      // Custom messages use atUsers.passport instead of forcePushAccountIds.
+      // When botPassport is configured, require an explicit @-mention.
+      const botPassport = nimCfg?.botPassport?.toLowerCase();
+      if (botPassport) {
+        const earlyParsed = parseCustomMessage(message);
+        const mentioned = earlyParsed?.atPassports?.includes(botPassport) ?? false;
+        if (!mentioned) {
+          log(
+            `[beeim] ignoring team custom message — reason: bot not @-mentioned (botPassport: ${botPassport})`,
+          );
+          return;
+        }
+        log(
+          `[beeim] team custom message accepted — reason: bot @-mentioned via atUsers (botPassport: ${botPassport})`,
+        );
+      } else {
+        log(
+          `[beeim] team custom message accepted — reason: no botPassport configured, bypassing @-mention check`,
+        );
+      }
     }
   }
 
@@ -223,8 +243,8 @@ export async function handleBeeimMessage(params: {
     const replyTarget = isTeam ? message.to : effectiveSenderId;
     const beeimFrom = `beeim:${effectiveSenderId}`;
     const beeimTo = isTeam ? `team:${message.to}` : `user:${effectiveSenderId}`;
-    const chatType = "direct";
     const peerKind = isTeam ? "group" : "direct";
+    const chatType = peerKind;
     // P2P session key is keyed on the business senderId so conversations with
     // the same user are always routed to the same agent session.
     const peerId = isTeam ? `team-${message.to}` : effectiveSenderId;
@@ -259,7 +279,7 @@ export async function handleBeeimMessage(params: {
         log(`[beeim] custom message contains image — downloading: ${customMsgParsed.imageUrl}`);
         const localPath = await downloadImageToLocal(customMsgParsed.imageUrl);
         if (localPath) {
-          mediaList.push({ type: "image" as const, url: localPath });
+          mediaList.push({ type: "image" as const, url: customMsgParsed.imageUrl, localPath });
           log(`[beeim] image downloaded — path: ${localPath}`);
         } else {
           log(`[beeim] image download failed — url: ${customMsgParsed.imageUrl}`);
@@ -268,11 +288,23 @@ export async function handleBeeimMessage(params: {
     } else if (["image", "file", "audio", "video"].includes(message.type)) {
       const attachUrl = message.attach?.url;
       if (attachUrl) {
+        const mediaType = message.type as "image" | "file" | "audio" | "video";
+        let localPath: string | null = null;
+        if (mediaType === "image") {
+          log(`[beeim] native image message — downloading: ${attachUrl}`);
+          localPath = await downloadImageToLocal(attachUrl);
+          if (localPath) {
+            log(`[beeim] native image downloaded — path: ${localPath}`);
+          } else {
+            log(`[beeim] native image download failed — url: ${attachUrl}`);
+          }
+        }
         mediaList.push({
-          type: message.type as "image" | "file" | "audio" | "video",
+          type: mediaType,
           url: attachUrl,
           name: message.attach?.name,
           size: message.attach?.size,
+          ...(localPath ? { localPath } : {}),
         });
       }
     }
@@ -436,11 +468,13 @@ export async function handleBeeimMessage(params: {
               // Custom messages reply via HTTP API using the envelope chatId.
               try {
                 log(`[beeim] sending via HTTP API — chatId: ${customMsgParsed.chatId}`);
+                const isGroup = customMsgParsed.chatType === 2;
                 const result = await sendMessageViaHttpApi({
                   cfg,
                   chatId: customMsgParsed.chatId,
                   text: chunk,
                   accountId,
+                  isGroup,
                 });
                 if (!result.success) {
                   log(`[beeim] HTTP API send failed — error: ${result.error}`);

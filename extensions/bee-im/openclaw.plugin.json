@@ -1,8 +1,0 @@
-{
-  "id": "bee-im",
-  "channels": ["bee-im"],
-  "configSchema": {
-    "type": "object",
-    "properties": {}
-  }
-}

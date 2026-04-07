@@ -258,8 +258,9 @@ export async function sendMessageViaHttpApi(params: {
   chatId: string;
   text: string;
   accountId?: string;
+  isGroup?: boolean;
 }): Promise<BeeimSendResult> {
-  const { cfg, chatId, text, accountId } = params;
+  const { cfg, chatId, text, accountId, isGroup = false } = params;
   const nimCfg = resolveInstCfg(cfg, accountId);
 
   if (!nimCfg) {
@@ -285,8 +286,8 @@ export async function sendMessageViaHttpApi(params: {
   );
 
   try {
-    // sendBeeMessage 参数：chatId, text, appKey, accid, token
-    await sendBeeMessage(chatId, text, appKey, accid, token);
+    // sendBeeMessage 参数：chatId, text, appKey, accid, token, isGroup
+    await sendBeeMessage(chatId, text, appKey, accid, token, isGroup);
     return { success: true };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);

@@ -5,6 +5,7 @@
 
 import { createHash } from "crypto";
 import { promises as fs } from "fs";
+import { homedir } from "os";
 import { join } from "path";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -19,8 +20,7 @@ function safeParseJSON<T = unknown>(raw: string | undefined | null, fallback: T)
 }
 
 function getBeemMediaCacheDir(): string {
-  const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "/tmp";
-  return join(homeDir, ".openclaw", "cache", "channels", "beeim");
+  return join(homedir(), ".openclaw", "cache", "channels", "beeim");
 }
 
 // ─── image download ────────────────────────────────────────────────────────────
@@ -85,6 +85,8 @@ export interface ParsedCustomMessage {
   senderId: string;
   /** Reply target (from raw envelope chatId). */
   chatId: string;
+  /** Chat type from raw envelope (1=single, 2=group). */
+  chatType?: number;
   /** NIM-level raw msgType from the envelope. */
   msgType?: number;
   content: BeeCustomMessageContent;
@@ -92,6 +94,8 @@ export interface ParsedCustomMessage {
   isImage: boolean;
   text?: string;
   imageUrl?: string;
+  /** Passport list from atUsers in content (used for @-mention detection). */
+  atPassports: string[];
 }
 
 // ─── parse ─────────────────────────────────────────────────────────────────────
@@ -159,15 +163,29 @@ export function parseCustomMessage(msg: unknown): ParsedCustomMessage | null {
     `[beeim] custom message parsed — senderId: ${senderId}, chatId: ${chatId}, isText: ${isText}, isImage: ${isImage}, text: ${text ? String(text).substring(0, 80) : "(empty)"}`,
   );
 
+  // ── 5. Extract @-mentioned passports from atUsers ─────────────────────────
+  const atUsers = Array.isArray(content.atUsers) ? content.atUsers : [];
+  const atPassports: string[] = atUsers
+    .map((u: Record<string, unknown>) =>
+      typeof u.passport === "string" ? u.passport.toLowerCase() : "",
+    )
+    .filter(Boolean);
+
+  if (atPassports.length > 0) {
+    console.log(`[beeim] custom message atPassports — [${atPassports.join(", ")}]`);
+  }
+
   return {
     senderId,
     chatId,
+    chatType: envelope?.chatType,
     msgType: envelope?.msgType,
     content,
     isText,
     isImage,
     text,
     imageUrl: isImage ? content.url : undefined,
+    atPassports,
   };
 }
 
@@ -180,11 +198,13 @@ export function isCustomMessage(msgType: string | number): boolean {
 
 /**
  * Extract the display text from a parsed custom message.
- * Images are represented as "[image] <url>".
+ * Images use a placeholder so the media pipeline provides the downloaded local
+ * path via MediaPath/MediaUrl instead of embedding the remote CDN URL in the
+ * body text (mirrors the native NIM image message behaviour).
  */
 export function extractCustomMessageText(parsed: ParsedCustomMessage): string {
   if (parsed.isImage && parsed.imageUrl) {
-    return `[image] ${parsed.imageUrl}`;
+    return "[图片]";
   }
   if (parsed.text) {
     return parsed.text;

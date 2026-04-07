@@ -110,6 +110,13 @@ export const BeeimInstanceConfigSchema = z.object({
   /** Authentication token (coerced from number if needed) */
   token: coerceToString.optional(),
 
+  /**
+   * Bot passport (business-layer identity) for custom message @-mention detection.
+   * Example: "beeclaw_1016@bee.163.com"
+   * When set, group custom messages are only processed if atUsers contains this passport.
+   */
+  botPassport: z.string().optional(),
+
   /** Whether to enable anti-spam protection */
   antispamEnabled: z.boolean().optional().default(true),
 
