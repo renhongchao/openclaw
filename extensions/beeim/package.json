@@ -1,20 +1,23 @@
 {
-  "name": "@openclaw/beeim",
-  "version": "1.0.0",
-  "description": "OpenClaw BeeIM channel plugin (网易云信 IM)",
+  "name": "@bee/openclaw-beeim",
+  "version": "1.0.2",
+  "description": "OpenClaw BeeIM channel plugin (网易小蜜蜂 IM)",
+  "files": [
+    "index.ts",
+    "src",
+    "openclaw.plugin.json"
+  ],
   "type": "module",
   "dependencies": {
-    "@yxim/nim-bot": "^10.9.78",
-    "zod": "^3.22.4"
+    "@yxim/nim-bot": "^10.9.78"
   },
-  "peerDependencies": {
-    "openclaw": ">=2026.3.30"
+  "devDependencies": {
+    "openclaw": ">=2026.3.30",
+    "zod": "^4.0.0"
   },
-  "peerDependenciesMeta": {
-    "openclaw": {
-      "optional": true
-    }
-  },
+  "bundledDependencies": [
+    "@yxim/nim-bot"
+  ],
   "openclaw": {
     "extensions": [
       "./index.ts"
@@ -22,10 +25,10 @@
     "channel": {
       "id": "beeim",
       "label": "BeeIM",
-      "selectionLabel": "BeeIM (网易云信 IM)",
+      "selectionLabel": "BeeIM (网易小蜜蜂 IM)",
       "docsPath": "/channels/beeim",
       "docsLabel": "beeim",
-      "blurb": "BeeIM 网易云信 IM 即时通讯。",
+      "blurb": "BeeIM 网易小蜜蜂 IM 即时通讯。",
       "aliases": [
         "bee-im",
         "netease",
@@ -34,7 +37,7 @@
       "order": 80
     },
     "install": {
-      "npmSpec": "@openclaw/beeim",
+      "npmSpec": "@bee/openclaw-beeim",
       "defaultChoice": "npm",
       "minHostVersion": ">=2026.3.30"
     },

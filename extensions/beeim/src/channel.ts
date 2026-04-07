@@ -22,10 +22,10 @@ import type {
 const meta = {
   id: "beeim",
   label: "BeeIM",
-  selectionLabel: "BeeIM (网易云信 IM)",
+  selectionLabel: "BeeIM (网易小蜜蜂 IM)",
   docsPath: "/channels/beeim",
   docsLabel: "beeim",
-  blurb: "BeeIM 网易云信 IM 即时通讯。",
+  blurb: "BeeIM 网易小蜜蜂 IM 即时通讯。",
   aliases: ["bee-im", "netease", "yunxin"] as string[],
   order: 80,
 };

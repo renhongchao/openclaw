@@ -8,7 +8,7 @@ export { setBeeimRuntime } from "./src/runtime.js";
 export default defineChannelPluginEntry({
   id: "beeim",
   name: "BeeIM",
-  description: "BeeIM (网易云信 IM) channel plugin",
+  description: "BeeIM (网易小蜜蜂 IM) channel plugin",
   plugin: beeimPlugin,
   setRuntime: setBeeimRuntime,
 });
