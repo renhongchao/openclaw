@@ -14,6 +14,56 @@ import type {
   BeeimP2pPolicy,
 } from "./types.js";
 
+// ─── Message deduplication ──────────────────────────────────────────────────
+// The NIM SDK sometimes fires the same message callback more than once for a
+// single server event.  We keep a bounded set of recently-seen message keys
+// (`sessionType:msgId`) and drop duplicates silently.
+
+const DEDUP_MAX_SIZE = 500;
+const DEDUP_TTL_MS = 30_000; // 30 seconds
+
+interface DedupEntry {
+  key: string;
+  ts: number;
+}
+
+class MessageDeduplicator {
+  private seen = new Map<string, number>(); // key → timestamp
+  private queue: DedupEntry[] = []; // insertion-order for eviction
+
+  /** Returns `true` if the message is a duplicate and should be dropped. */
+  isDuplicate(sessionType: string, target: string, msgId: string): boolean {
+    const key = `${sessionType}:${target}:${msgId}`;
+    const now = Date.now();
+
+    // Evict expired entries
+    while (this.queue.length > 0 && now - this.queue[0]!.ts > DEDUP_TTL_MS) {
+      const evicted = this.queue.shift()!;
+      // Only delete from map if the map entry matches the evicted timestamp
+      // (it might have been refreshed by a later duplicate).
+      if (this.seen.get(evicted.key) === evicted.ts) {
+        this.seen.delete(evicted.key);
+      }
+    }
+
+    if (this.seen.has(key)) {
+      return true; // duplicate
+    }
+
+    // Evict oldest if at capacity
+    if (this.seen.size >= DEDUP_MAX_SIZE) {
+      const oldest = this.queue.shift();
+      if (oldest) this.seen.delete(oldest.key);
+    }
+
+    this.seen.set(key, now);
+    this.queue.push({ key, ts: now });
+    return false;
+  }
+}
+
+// ─── Monitor state ──────────────────────────────────────────────────────────
+
 /** 监控状态 */
 interface MonitorState {
   client: BeeimClientInstance;
@@ -21,6 +71,8 @@ interface MonitorState {
   abortController: AbortController;
   /** In-memory group chat history for silent ingest (per group ID). */
   groupHistories: Map<string, HistoryEntry[]>;
+  /** Per-connection message deduplicator. */
+  dedup: MessageDeduplicator;
 }
 
 /** 监控状态缓存 */
@@ -89,11 +141,13 @@ export async function monitorBeeimProvider(params: {
 
     // 保存监控状态
     const groupHistories = new Map<string, HistoryEntry[]>();
+    const dedup = new MessageDeduplicator();
     const state: MonitorState = {
       client,
       running: true,
       abortController,
       groupHistories,
+      dedup,
     };
     monitorStates.set(monitorKey, state);
 
@@ -103,6 +157,16 @@ export async function monitorBeeimProvider(params: {
 
       // 忽略自己发送的消息
       if (msg.from === creds.account) {
+        return;
+      }
+
+      // ── Dedup: drop messages already seen in this connection ──
+      const msgIdStr = String(msg.msgId ?? msg.clientMsgId ?? "");
+      const dedupTarget = String(msg.to ?? msg.from ?? "");
+      if (msgIdStr && state.dedup.isDuplicate(msg.sessionType, dedupTarget, msgIdStr)) {
+        console.log(
+          `[beeim] duplicate message dropped — session: ${msg.sessionType}, msgId: ${msgIdStr}`,
+        );
         return;
       }
 

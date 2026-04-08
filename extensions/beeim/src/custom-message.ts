@@ -54,12 +54,118 @@ export async function downloadImageToLocal(imageUrl: string): Promise<string | n
   }
 }
 
+// ─── file check + download (msgType=22) ───────────────────────────────────────
+
+interface FileCheckResponse {
+  code: number;
+  message: string;
+  data: {
+    url: string;
+    status: boolean;
+    validDay: number;
+  };
+}
+
+/**
+ * Call the file check API to get a verified download URL for the given file URL.
+ * Returns the resolved URL on success, or null on failure.
+ */
+async function checkFileUrl(fileUrl: string): Promise<string | null> {
+  const sendTime = Date.now();
+  const apiUrl = `https://api.mifengs.com/worklife/im/nc/file/check?url=${encodeURIComponent(fileUrl)}&sendTime=${sendTime}`;
+  try {
+    const response = await fetch(apiUrl);
+    if (!response.ok) {
+      console.error(`[beeim] file check API failed — status: ${response.status}, url: ${fileUrl}`);
+      return null;
+    }
+    const json = (await response.json()) as FileCheckResponse;
+    if (json.code !== 0 || !json.data?.url) {
+      console.error(
+        `[beeim] file check API returned error — code: ${json.code}, message: ${json.message}`,
+      );
+      return null;
+    }
+    console.log(`[beeim] file check API resolved — url: ${json.data.url}`);
+    return json.data.url;
+  } catch (err) {
+    console.error(`[beeim] file check API error — url: ${fileUrl}, error: ${err}`);
+    return null;
+  }
+}
+
+/**
+ * Download a file URL (after check API resolution) to the local BeeIM cache directory.
+ * Infers the filename from the content-disposition header or the URL path.
+ * Returns the local path on success, or null on failure.
+ */
+export async function downloadFileToLocal(
+  fileUrl: string,
+  hint?: { name?: string },
+): Promise<string | null> {
+  if (!fileUrl) return null;
+  try {
+    // First resolve via check API
+    const resolvedUrl = await checkFileUrl(fileUrl);
+    if (!resolvedUrl) return null;
+
+    const response = await fetch(resolvedUrl);
+    if (!response.ok) {
+      console.error(
+        `[beeim] file download failed — status: ${response.status}, url: ${resolvedUrl}`,
+      );
+      return null;
+    }
+
+    // Determine filename: prefer hint.name, then Content-Disposition, then URL path
+    let filename = hint?.name ?? "";
+    if (!filename) {
+      const disposition = response.headers.get("content-disposition") ?? "";
+      const match = /filename[^;=\n]*=(?:(['"])(?<q>[^'"]*)\1|(?<bare>[^;\n]*))/i.exec(disposition);
+      filename = match?.groups?.q ?? match?.groups?.bare ?? "";
+    }
+    if (!filename) {
+      // Extract last path segment from URL, strip query
+      const urlPath = new URL(resolvedUrl).pathname;
+      filename = urlPath.split("/").pop() ?? "";
+    }
+    if (!filename) {
+      const urlHash = createHash("md5").update(fileUrl).digest("hex").substring(0, 8);
+      filename = `beeim-file-${urlHash}`;
+    }
+
+    // Prefix with hash+timestamp to avoid collisions
+    const urlHash = createHash("md5").update(fileUrl).digest("hex").substring(0, 8);
+    const safeFilename = `beeim-file-${urlHash}-${Date.now()}-${filename}`;
+    const cacheDir = getBeemMediaCacheDir();
+    const localPath = join(cacheDir, safeFilename);
+
+    await fs.mkdir(cacheDir, { recursive: true });
+    await fs.writeFile(localPath, Buffer.from(await response.arrayBuffer()));
+    console.log(`[beeim] file downloaded — path: ${localPath}`);
+    return localPath;
+  } catch (err) {
+    console.error(`[beeim] file download error — url: ${fileUrl}, error: ${err}`);
+    return null;
+  }
+}
+
 // ─── types ─────────────────────────────────────────────────────────────────────
 
 export interface BeeCustomMessageContent {
   text?: string;
   url?: string;
   subType?: number;
+  /** msgType=22: file name */
+  name?: string;
+  /** msgType=14: share card fields */
+  cardType?: number;
+  title?: string;
+  titleIcon?: string;
+  subTitle?: string;
+  imgsrc?: string;
+  imageRatio?: number;
+  skipUrl?: string;
   [key: string]: unknown;
 }
 
@@ -92,8 +198,18 @@ export interface ParsedCustomMessage {
   content: BeeCustomMessageContent;
   isText: boolean;
   isImage: boolean;
+  /** msgType=22: content is a file attachment */
+  isFile: boolean;
+  /** msgType=14: content is a share card */
+  isShareCard: boolean;
   text?: string;
   imageUrl?: string;
+  /** msgType=22: remote file URL (before check API resolution) */
+  fileUrl?: string;
+  /** msgType=22: original filename hint */
+  fileName?: string;
+  /** msgType=14: composed text to feed to the agent */
+  shareCardText?: string;
   /** Passport list from atUsers in content (used for @-mention detection). */
   atPassports: string[];
 }
@@ -153,14 +269,46 @@ export function parseCustomMessage(msg: unknown): ParsedCustomMessage | null {
   }
 
   // ── 4. Classify ───────────────────────────────────────────────────────────
+  const innerMsgType = envelope?.msgType;
   const hasText = typeof content.text === "string" && content.text.length > 0;
   const hasUrl = typeof content.url === "string" && content.url.length > 0;
-  const isImage = hasUrl || content.subType === 2;
-  const isText = !isImage && (hasText || content.subType === 1);
-  const text = isImage ? content.url : content.text;
+
+  // msgType=22: file attachment
+  const isFile = innerMsgType === 22;
+
+  // msgType=14: share card (only cardType=1 dynamic handled)
+  const isShareCard = innerMsgType === 14;
+
+  // Image: url present and not a file or share card
+  const isImage = !isFile && !isShareCard && (hasUrl || content.subType === 2);
+
+  // Text: not image/file/shareCard
+  const isText = !isImage && !isFile && !isShareCard && (hasText || content.subType === 1);
+
+  // Build text representation
+  let text: string | undefined;
+  let fileUrl: string | undefined;
+  let fileName: string | undefined;
+  let shareCardText: string | undefined;
+
+  if (isFile) {
+    fileUrl = typeof content.url === "string" ? content.url : undefined;
+    fileName = typeof content.name === "string" ? content.name : undefined;
+    text = fileName ? `[文件] ${fileName}` : "[文件]";
+  } else if (isShareCard) {
+    const cardTitle = typeof content.title === "string" ? content.title : "";
+    const cardSubTitle = typeof content.subTitle === "string" ? content.subTitle : "";
+    const cardSkipUrl = typeof content.skipUrl === "string" ? content.skipUrl : "";
+    shareCardText = `分享了一批标题为「${cardTitle}」副标题为「${cardSubTitle}」访问地址为 ${cardSkipUrl} 的笔记`;
+    text = shareCardText;
+  } else if (isImage) {
+    text = content.url;
+  } else {
+    text = content.text;
+  }
 
   console.log(
-    `[beeim] custom message parsed — senderId: ${senderId}, chatId: ${chatId}, isText: ${isText}, isImage: ${isImage}, text: ${text ? String(text).substring(0, 80) : "(empty)"}`,
+    `[beeim] custom message parsed — senderId: ${senderId}, chatId: ${chatId}, isText: ${isText}, isImage: ${isImage}, isFile: ${isFile}, isShareCard: ${isShareCard}, text: ${text ? String(text).substring(0, 80) : "(empty)"}`,
   );
 
   // ── 5. Extract @-mentioned passports from atUsers ─────────────────────────
@@ -183,8 +331,13 @@ export function parseCustomMessage(msg: unknown): ParsedCustomMessage | null {
     content,
     isText,
     isImage,
+    isFile,
+    isShareCard,
     text,
     imageUrl: isImage ? content.url : undefined,
+    fileUrl,
+    fileName,
+    shareCardText,
     atPassports,
   };
 }
@@ -201,10 +354,18 @@ export function isCustomMessage(msgType: string | number): boolean {
  * Images use a placeholder so the media pipeline provides the downloaded local
  * path via MediaPath/MediaUrl instead of embedding the remote CDN URL in the
  * body text (mirrors the native NIM image message behaviour).
+ * Files use a placeholder; the actual file is passed via MediaPath.
+ * Share cards are composed into readable text.
  */
 export function extractCustomMessageText(parsed: ParsedCustomMessage): string {
   if (parsed.isImage && parsed.imageUrl) {
     return "[图片]";
+  }
+  if (parsed.isFile) {
+    return parsed.fileName ? `[文件] ${parsed.fileName}` : "[文件]";
+  }
+  if (parsed.isShareCard && parsed.shareCardText) {
+    return parsed.shareCardText;
   }
   if (parsed.text) {
     return parsed.text;

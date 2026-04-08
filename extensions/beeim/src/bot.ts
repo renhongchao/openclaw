@@ -17,6 +17,7 @@ import {
   parseCustomMessage,
   extractCustomMessageText,
   downloadImageToLocal,
+  downloadFileToLocal,
 } from "./custom-message.js";
 import {
   buildBeeimMediaPayload,
@@ -177,10 +178,14 @@ export async function handleBeeimMessage(params: {
         const earlyParsed = parseCustomMessage(message);
         botMentioned = earlyParsed?.atPassports?.includes(botPassport) ?? false;
       } else {
-        // No botPassport configured — cannot detect @-mention, bypass check.
-        botMentioned = true;
+        // No botPassport configured — cannot detect @-mention for custom
+        // messages.  Default to rejected (same as non-mentioned) so that
+        // bot-originated messages routed back through the SDK do not create
+        // a self-reply loop.  Operators should configure botPassport to
+        // enable @-mention gating for custom messages.
+        botMentioned = false;
         log(
-          `[beeim] team custom message accepted — reason: no botPassport configured, bypassing @-mention check`,
+          `[beeim] team custom message rejected — reason: no botPassport configured, cannot verify @-mention`,
         );
       }
     }
@@ -312,6 +317,24 @@ export async function handleBeeimMessage(params: {
           log(`[beeim] image downloaded — path: ${localPath}`);
         } else {
           log(`[beeim] image download failed — url: ${customMsgParsed.imageUrl}`);
+        }
+      } else if (customMsgParsed?.isFile && customMsgParsed.fileUrl) {
+        log(
+          `[beeim] custom message contains file — checking + downloading: ${customMsgParsed.fileUrl}`,
+        );
+        const localPath = await downloadFileToLocal(customMsgParsed.fileUrl, {
+          name: customMsgParsed.fileName,
+        });
+        if (localPath) {
+          mediaList.push({
+            type: "file" as const,
+            url: customMsgParsed.fileUrl,
+            name: customMsgParsed.fileName,
+            localPath,
+          });
+          log(`[beeim] file downloaded — path: ${localPath}`);
+        } else {
+          log(`[beeim] file download failed — url: ${customMsgParsed.fileUrl}`);
         }
       }
     } else if (["image", "file", "audio", "video"].includes(message.type)) {
