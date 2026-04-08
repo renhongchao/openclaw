@@ -5,6 +5,7 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import { resolveBeeimAccountById, resolveAllBeeimAccounts } from "./accounts.js";
 import { createBeeimClient, getCachedBeeimClient } from "./client.js";
+import { BEE_API_CONFIG } from "./http-api.js";
 import { sendBeeMessage } from "./http-api.js";
 import { normalizeBeeimTarget } from "./targets.js";
 import type { BeeimInstanceConfig, BeeimSendResult, BeeimSessionType } from "./types.js";
@@ -280,14 +281,15 @@ export async function sendMessageViaHttpApi(params: {
   // creds.account = nimToken 的第二部分（accid）
   // creds.token = nimToken 的第三部分
   const { appKey, account: accid, token } = creds;
+  const apiBase = nimCfg.advanced?.apiBase ?? BEE_API_CONFIG.DEFAULT_API_BASE;
 
   console.log(
     `[beeim] sendMessageViaHttpApi — chatId: ${chatId}, length: ${text.length}, accountId: "${accountId ?? "none"}", appKey: ${appKey}, accid: ${accid}`,
   );
 
   try {
-    // sendBeeMessage 参数：chatId, text, appKey, accid, token, isGroup
-    await sendBeeMessage(chatId, text, appKey, accid, token, isGroup);
+    // sendBeeMessage 参数：chatId, text, appKey, accid, token, isGroup, apiBase
+    await sendBeeMessage(chatId, text, appKey, accid, token, isGroup, apiBase);
     return { success: true };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);

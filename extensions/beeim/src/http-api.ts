@@ -9,11 +9,20 @@
  * HTTP API URLs 和配置
  */
 export const BEE_API_CONFIG = {
-  TOKEN_API_URL: "http://api-test.mifengs.com/worklife-go/api/v1/claw/im/oauth2/accessToken",
-  SEND_API_URL: "http://api-test.mifengs.com/worklife-go/api/v1/claw/im/send",
+  DEFAULT_API_BASE: "https://api.mifengs.com",
   FIXED_HTTP_FROM: "beeClaw",
   APP_NAME: "beeClaw", // appName 固定值
 };
+
+/** Build per-base URL helpers */
+export function buildApiUrls(apiBase: string) {
+  const base = apiBase.replace(/\/$/, "");
+  return {
+    tokenUrl: `${base}/worklife-go/api/v1/claw/im/oauth2/accessToken`,
+    sendUrl: `${base}/worklife-go/api/v1/claw/im/send`,
+    fileCheckBaseUrl: `${base}/worklife-go/api/v1/claw/im/file/check`,
+  };
+}
 
 /**
  * Access Token 缓存
@@ -43,7 +52,11 @@ const tokenCacheMap = new Map<string, TokenCache>();
  * @param token token（来自 nimToken 的第三部分，用于认证）
  * @returns accessToken
  */
-export async function getAccessToken(accid: string, token: string): Promise<string> {
+export async function getAccessToken(
+  accid: string,
+  token: string,
+  apiBase: string = BEE_API_CONFIG.DEFAULT_API_BASE,
+): Promise<string> {
   if (!accid || !token) {
     throw new Error("[beeim] 获取 accessToken 需要 accid 和 token");
   }
@@ -61,6 +74,8 @@ export async function getAccessToken(accid: string, token: string): Promise<stri
 
   console.log("[beeim] 获取新的 accessToken...");
 
+  const { tokenUrl } = buildApiUrls(apiBase);
+
   // Token 获取需要三个参数：AppKey（accid）, AppSecret（token）, AppName
   const tokenPayload = {
     AppKey: accid, // 来自 nimToken 的第二部分（accid）
@@ -69,12 +84,10 @@ export async function getAccessToken(accid: string, token: string): Promise<stri
   };
 
   const requestBody = JSON.stringify(tokenPayload);
-  console.log(
-    `[beeim] token API request — url: ${BEE_API_CONFIG.TOKEN_API_URL}, body: ${requestBody}`,
-  );
+  console.log(`[beeim] token API request — url: ${tokenUrl}, body: ${requestBody}`);
 
   try {
-    const response = await fetch(BEE_API_CONFIG.TOKEN_API_URL, {
+    const response = await fetch(tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: requestBody,
@@ -192,6 +205,7 @@ export async function sendBeeMessage(
   accid: string,
   token: string,
   isGroup: boolean = false,
+  apiBase: string = BEE_API_CONFIG.DEFAULT_API_BASE,
   isRetry: boolean = false,
 ): Promise<void> {
   if (!appKey || !accid || !token) {
@@ -206,8 +220,9 @@ export async function sendBeeMessage(
   }
 
   // 获取 accessToken（会自动刷新）- 所有分块只需获取一次
-  // 注意：getAccessToken 使用 accid 和 token 进行认证
-  const accessToken = await getAccessToken(accid, token);
+  const accessToken = await getAccessToken(accid, token, apiBase);
+
+  const { sendUrl } = buildApiUrls(apiBase);
 
   // 按顺序发送每个分块
   for (let i = 0; i < chunks.length; i++) {
@@ -227,7 +242,7 @@ export async function sendBeeMessage(
 
     const chunkInfo = chunks.length > 1 ? ` (分块 ${i + 1}/${chunks.length})` : "";
     console.log(`[beeim] ========== HTTP 请求参数${chunkInfo} ==========`);
-    console.log("[beeim] URL:", BEE_API_CONFIG.SEND_API_URL);
+    console.log("[beeim] URL:", sendUrl);
     console.log("[beeim] Method: POST");
     console.log(
       "[beeim] Payload:",
@@ -249,7 +264,7 @@ export async function sendBeeMessage(
     console.log("[beeim] =============================================");
 
     try {
-      const response = await fetch(BEE_API_CONFIG.SEND_API_URL, {
+      const response = await fetch(sendUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -286,7 +301,7 @@ export async function sendBeeMessage(
         // 清除 token 并重试整个发送
         console.log("[beeim] 清除 token 并重试...");
         clearAccessToken(accid);
-        await sendBeeMessage(chatId, text, appKey, accid, token, isGroup, true);
+        await sendBeeMessage(chatId, text, appKey, accid, token, isGroup, apiBase, true);
         return; // 成功重试后返回
       }
 

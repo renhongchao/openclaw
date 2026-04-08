@@ -10,7 +10,7 @@ import {
   buildPendingHistoryContextFromMap,
   clearHistoryEntriesIfEnabled,
 } from "openclaw/plugin-sdk/reply-history";
-import { isBeeimP2pAllowed, isBeeimTeamAllowed } from "./accounts.js";
+import { isBeeimP2pAllowed, isBeeimTeamAllowed, resolveBeeimCredentials } from "./accounts.js";
 import { getCachedBeeimClient } from "./client.js";
 import {
   isCustomMessage,
@@ -150,6 +150,8 @@ export async function handleBeeimMessage(params: {
   const log = runtime?.log ?? console.log;
   const error = runtime?.error ?? console.error;
   const botAccount = nimCfg?.account ? String(nimCfg.account) : "";
+  const apiBase = nimCfg?.advanced?.apiBase;
+  const beeimCreds = nimCfg ? resolveBeeimCredentials(nimCfg) : undefined;
 
   const isP2P = message.sessionType === "p2p";
   const isTeam = message.sessionType === "team" || message.sessionType === "superTeam";
@@ -324,6 +326,9 @@ export async function handleBeeimMessage(params: {
         );
         const localPath = await downloadFileToLocal(customMsgParsed.fileUrl, {
           name: customMsgParsed.fileName,
+          apiBase,
+          accid: beeimCreds?.account,
+          token: beeimCreds?.token,
         });
         if (localPath) {
           mediaList.push({

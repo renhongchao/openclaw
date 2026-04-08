@@ -1,6 +1,6 @@
 {
   "name": "@bee/openclaw-beeim",
-  "version": "1.0.4",
+  "version": "1.0.7",
   "description": "OpenClaw BeeIM channel plugin (网易小蜜蜂 IM)",
   "files": [
     "index.ts",

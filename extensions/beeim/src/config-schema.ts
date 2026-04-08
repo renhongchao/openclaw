@@ -85,6 +85,13 @@ export const AdvancedSubConfigSchema = z.object({
 
   /** Private deployment: CDN accelerate host domain (empty string to disable) */
   nos_accelerate_host: z.string().optional(),
+
+  /**
+   * BeeIM HTTP API base URL.
+   * Production (default): https://api.mifengs.com
+   * Test environment:      http://api-test.mifengs.com
+   */
+  apiBase: z.string().url().optional().default("https://api.mifengs.com"),
 });
 
 /**

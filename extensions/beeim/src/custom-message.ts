@@ -7,6 +7,7 @@ import { createHash } from "crypto";
 import { promises as fs } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import { BEE_API_CONFIG, buildApiUrls, getAccessToken } from "./http-api.js";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -68,21 +69,42 @@ interface FileCheckResponse {
 
 /**
  * Call the file check API to get a verified download URL for the given file URL.
+ *
+ * New endpoint: GET /worklife-go/api/v1/claw/im/file/check
+ *   ?url=<fileUrl>&accessToken=<token>&clientId=<accid>&appKey=beeClaw
+ *
  * Returns the resolved URL on success, or null on failure.
  */
-async function checkFileUrl(fileUrl: string): Promise<string | null> {
-  const sendTime = Date.now();
-  const apiUrl = `https://api.mifengs.com/worklife/im/nc/file/check?url=${encodeURIComponent(fileUrl)}&sendTime=${sendTime}`;
+async function checkFileUrl(
+  fileUrl: string,
+  auth: { accid: string; token: string },
+  apiBase: string = BEE_API_CONFIG.DEFAULT_API_BASE,
+): Promise<string | null> {
+  const { fileCheckBaseUrl } = buildApiUrls(apiBase);
   try {
+    const accessToken = await getAccessToken(auth.accid, auth.token, apiBase);
+    const params = new URLSearchParams({
+      url: fileUrl,
+      accessToken,
+      clientId: auth.accid,
+      appKey: BEE_API_CONFIG.APP_NAME,
+    });
+    const apiUrl = `${fileCheckBaseUrl}?${params.toString()}`;
+    console.log(
+      `[beeim] file check API request — url: ${fileCheckBaseUrl}?url=${fileUrl.substring(0, 60)}...`,
+    );
+
     const response = await fetch(apiUrl);
     if (!response.ok) {
-      console.error(`[beeim] file check API failed — status: ${response.status}, url: ${fileUrl}`);
+      console.error(
+        `[beeim] file check API failed — status: ${response.status}, url: ${fileUrl}, accid: ${auth.accid}, apiBase: ${apiBase}`,
+      );
       return null;
     }
     const json = (await response.json()) as FileCheckResponse;
     if (json.code !== 0 || !json.data?.url) {
       console.error(
-        `[beeim] file check API returned error — code: ${json.code}, message: ${json.message}`,
+        `[beeim] file check API returned error — code: ${json.code}, message: ${json.message}, params: url=${fileUrl}, accessToken=${accessToken.substring(0, 8)}..., clientId=${auth.accid}, appKey=${BEE_API_CONFIG.APP_NAME}, apiBase=${apiBase}`,
       );
       return null;
     }
@@ -101,12 +123,19 @@ async function checkFileUrl(fileUrl: string): Promise<string | null> {
  */
 export async function downloadFileToLocal(
   fileUrl: string,
-  hint?: { name?: string },
+  hint?: { name?: string; apiBase?: string; accid?: string; token?: string },
 ): Promise<string | null> {
   if (!fileUrl) return null;
+  const apiBase = hint?.apiBase ?? BEE_API_CONFIG.DEFAULT_API_BASE;
+  const accid = hint?.accid ?? "";
+  const token = hint?.token ?? "";
+  if (!accid || !token) {
+    console.error(`[beeim] file download skipped — missing accid/token for file check auth`);
+    return null;
+  }
   try {
-    // First resolve via check API
-    const resolvedUrl = await checkFileUrl(fileUrl);
+    // First resolve via check API (requires accessToken auth)
+    const resolvedUrl = await checkFileUrl(fileUrl, { accid, token }, apiBase);
     if (!resolvedUrl) return null;
 
     const response = await fetch(resolvedUrl);
@@ -298,7 +327,8 @@ export function parseCustomMessage(msg: unknown): ParsedCustomMessage | null {
   } else if (isShareCard) {
     const cardTitle = typeof content.title === "string" ? content.title : "";
     const cardSubTitle = typeof content.subTitle === "string" ? content.subTitle : "";
-    const cardSkipUrl = typeof content.skipUrl === "string" ? content.skipUrl : "";
+    const rawSkipUrl = typeof content.skipUrl === "string" ? content.skipUrl : "";
+    const cardSkipUrl = convertNewsappUrl(rawSkipUrl);
     shareCardText = `分享了一批标题为「${cardTitle}」副标题为「${cardSubTitle}」访问地址为 ${cardSkipUrl} 的笔记`;
     text = shareCardText;
   } else if (isImage) {
@@ -343,6 +373,28 @@ export function parseCustomMessage(msg: unknown): ParsedCustomMessage | null {
 }
 
 // ─── helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Convert app-internal deep-link URLs to accessible HTTP URLs.
+ *
+ *   newsapp://nc/rec/{ID}        → https://m.mifengs.com/reader/{ID}.html
+ *   ntescommunity://nc/recImg?id={ID} → https://m.mifengs.com/reader/{ID}.html
+ *
+ * Returns the original URL unchanged if it doesn't match any known scheme.
+ */
+function convertNewsappUrl(url: string): string {
+  // newsapp://nc/rec/{ID}
+  const newsapp = /^newsapp:\/\/nc\/rec\/([A-Za-z0-9]+)/.exec(url);
+  if (newsapp) {
+    return `https://m.mifengs.com/reader/${newsapp[1]}.html`;
+  }
+  // ntescommunity://nc/recImg?id={ID}
+  const community = /^ntescommunity:\/\/nc\/recImg\?id=([A-Za-z0-9]+)/.exec(url);
+  if (community) {
+    return `https://m.mifengs.com/reader/${community[1]}.html`;
+  }
+  return url;
+}
 
 /** Returns true for NIM custom message type (100 or "custom"). */
 export function isCustomMessage(msgType: string | number): boolean {

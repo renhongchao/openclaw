@@ -120,6 +120,7 @@ export const beeimPlugin: ChannelPlugin<ResolvedBeeimAccount> = {
                   nosSsl: { type: "boolean" },
                   nos_accelerate: { type: "string" },
                   nos_accelerate_host: { type: "string" },
+                  apiBase: { type: "string" },
                 },
               },
             },
@@ -169,6 +170,10 @@ export const beeimPlugin: ChannelPlugin<ResolvedBeeimAccount> = {
       },
       "advanced.nos_accelerate_host": {
         label: "CDN Accelerate Host (Private Deploy)",
+        advanced: true,
+      },
+      "advanced.apiBase": {
+        label: "API Base URL (测试环境)",
         advanced: true,
       },
     },
