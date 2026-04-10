@@ -170,9 +170,8 @@ export async function monitorBeeimProvider(params: {
         return;
       }
 
-      console.log(
-        `[beeim] received message — sender: ${msg.from}, type: ${msg.type}, session: ${msg.sessionType}, target: ${msg.to}, message id: ${msg.msgId}, timestamp: ${msg.time}`,
-      );
+      // NOTE: "received message" is already logged by client.ts onReceiveMessages;
+      // no need to log again here.
 
       try {
         await handleBeeimMessage({

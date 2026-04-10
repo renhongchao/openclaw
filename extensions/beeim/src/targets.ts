@@ -64,8 +64,9 @@ export function looksLikeBeeimId(value: string): boolean {
     return false;
   }
 
-  // Accept prefixed team/superTeam targets (numeric IDs)
   const lc = value.trim().toLowerCase();
+
+  // Accept prefixed team/superTeam targets (numeric IDs)
   if (lc.startsWith("team:") || lc.startsWith("superteam:")) {
     const parsed = parseBeeimTarget(value);
     return parsed !== null && parsed.id.length > 0;
@@ -76,8 +77,9 @@ export function looksLikeBeeimId(value: string): boolean {
     return false;
   }
 
-  // NIM account/team IDs: alphanumeric, underscores, or purely numeric
-  return /^[a-zA-Z0-9_]{1,32}$/.test(normalized);
+  // NIM account/team IDs: alphanumeric, underscores, dots, hyphens, or @
+  // (private deployments may use email-like accids such as "yd.8055a9a03da647e19@163.com")
+  return /^[a-zA-Z0-9_.@-]{1,128}$/.test(normalized);
 }
 
 /**

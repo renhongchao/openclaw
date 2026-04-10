@@ -6,7 +6,7 @@ import {
   sendVideoBeeim,
   inferMessageType,
 } from "./media.js";
-import { sendMessageBeeim, splitMessageIntoChunks, resolveInstCfg } from "./send.js";
+import { splitMessageIntoChunks, resolveInstCfg, sendMessageViaHttpApi } from "./send.js";
 import { normalizeBeeimTarget, parseBeeimTarget } from "./targets.js";
 import type { BeeimInstanceConfig } from "./types.js";
 
@@ -111,6 +111,7 @@ export function resolveBeeimOutboundTarget(params: {
 
 /**
  * Send text message through BeeIM channel.
+ * All messages are routed via the BeeIM HTTP API (not the NIM SDK).
  */
 export async function sendBeeimOutboundText(params: {
   to: string;
@@ -121,36 +122,27 @@ export async function sendBeeimOutboundText(params: {
   const { to, text, cfg } = params;
   const parsed = parseBeeimTarget(to);
   const targetId = parsed?.id ?? normalizeBeeimTarget(to) ?? to;
-  const sessionType = parsed?.sessionType ?? "p2p";
+  const isGroup = parsed?.sessionType === "team" || parsed?.sessionType === "superTeam";
 
   console.log(
-    `[beeim] outbound text send — target: ${targetId}, session: ${sessionType}, length: ${text.length}`,
+    `[beeim] outbound text send via HTTP API — chatId: ${targetId}, isGroup: ${isGroup}, length: ${text.length}`,
   );
 
   try {
-    const result = await sendMessageBeeim({
+    const result = await sendMessageViaHttpApi({
       cfg,
-      to: targetId,
+      chatId: targetId,
       text,
-      sessionType,
+      accountId: params.accountId,
+      isGroup,
     });
 
-    if (result.success) {
-      return {
-        channel: "beeim",
-        ok: true,
-        messageId: result.msgId ?? "",
-        msgId: result.msgId,
-        clientMsgId: result.clientMsgId,
-      };
-    } else {
-      return {
-        channel: "beeim",
-        ok: false,
-        messageId: "",
-        error: result.error,
-      };
-    }
+    return {
+      channel: "beeim",
+      ok: result.success,
+      messageId: "",
+      error: result.success ? undefined : result.error,
+    };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     return {

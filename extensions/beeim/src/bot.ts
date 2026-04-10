@@ -30,13 +30,7 @@ import {
 } from "./media.js";
 import { resolveUserNick, resolveTeamName, buildConversationLabel } from "./name-resolver.js";
 import { getBeeimRuntime } from "./runtime.js";
-import {
-  sendMessageBeeim,
-  replyMessageBeeim,
-  splitMessageIntoChunks,
-  sendStreamMessageBeeim,
-  sendMessageViaHttpApi,
-} from "./send.js";
+import { splitMessageIntoChunks, sendStreamMessageBeeim, sendMessageViaHttpApi } from "./send.js";
 import type {
   BeeimP2pPolicy,
   BeeimTeamPolicy,
@@ -78,10 +72,17 @@ function mapMessageType(msgType: number): BeeimMessageType {
  * Extract text content from a BeeIM message.
  * For custom messages (type=100), delegates to parseCustomMessage which reads
  * rawMsg.attachment.raw → envelope.content → { text }.
+ *
+ * When a pre-parsed custom message result is available, pass it as
+ * `preParsedCustom` to avoid calling parseCustomMessage() again (and its
+ * verbose console logging).
  */
-function extractMessageContent(message: BeeimMessageEvent): string {
+function extractMessageContent(
+  message: BeeimMessageEvent,
+  preParsedCustom?: ReturnType<typeof parseCustomMessage>,
+): string {
   if (isCustomMessage(message.type) || (message.type as any) === 100) {
-    const parsed = parseCustomMessage(message);
+    const parsed = preParsedCustom ?? parseCustomMessage(message);
     if (parsed) {
       return extractCustomMessageText(parsed);
     }
@@ -110,7 +111,10 @@ function extractMessageContent(message: BeeimMessageEvent): string {
 /**
  * Parse a BeeIM message event into a message context.
  */
-export function parseBeeimMessageEvent(message: BeeimMessageEvent): BeeimMessageContext {
+export function parseBeeimMessageEvent(
+  message: BeeimMessageEvent,
+  preParsedCustom?: ReturnType<typeof parseCustomMessage>,
+): BeeimMessageContext {
   const isDirectMessage = message.sessionType === "p2p";
   const sessionCore = isDirectMessage ? `p2p-${message.from}` : `team-${message.to}`;
   const sessionId = `agent:beebot:${sessionCore}`;
@@ -121,7 +125,7 @@ export function parseBeeimMessageEvent(message: BeeimMessageEvent): BeeimMessage
     sessionType: message.sessionType,
     senderId: message.from,
     type: message.type,
-    text: extractMessageContent(message),
+    text: extractMessageContent(message, preParsedCustom),
     timestamp: message.time,
     isDm: isDirectMessage,
     rawEvent: message,
@@ -169,16 +173,19 @@ export async function handleBeeimMessage(params: {
   const historyLimit = DEFAULT_GROUP_HISTORY_LIMIT;
   let botMentioned = false;
 
+  // Parse custom message once up-front so every downstream consumer reuses
+  // the same result (avoids duplicate console logging from parseCustomMessage).
+  const isCustomMsg = isCustomMessage(message.type) || (message.type as any) === 100;
+  const customMsgParsed = isCustomMsg ? parseCustomMessage(message) : null;
+
   if (isTeam) {
-    const isCustom = message.type === "custom" || (message.type as any) === 100;
-    if (!isCustom) {
+    if (!isCustomMsg) {
       const forcePushIds = message.forcePushAccountIds ?? [];
       botMentioned = forcePushIds.includes(botAccount);
     } else {
       const botPassport = nimCfg?.botPassport?.toLowerCase();
       if (botPassport) {
-        const earlyParsed = parseCustomMessage(message);
-        botMentioned = earlyParsed?.atPassports?.includes(botPassport) ?? false;
+        botMentioned = customMsgParsed?.atPassports?.includes(botPassport) ?? false;
       } else {
         // No botPassport configured — cannot detect @-mention for custom
         // messages.  Default to rejected (same as non-mentioned) so that
@@ -194,7 +201,7 @@ export async function handleBeeimMessage(params: {
 
     if (!botMentioned) {
       // Silent ingest: store message for group context without triggering a reply.
-      const ctx = parseBeeimMessageEvent(message);
+      const ctx = parseBeeimMessageEvent(message, customMsgParsed);
       if (groupHistories) {
         recordPendingHistoryEntryIfEnabled({
           historyMap: groupHistories,
@@ -217,7 +224,7 @@ export async function handleBeeimMessage(params: {
     log(`[beeim] team message accepted — reason: bot @-mentioned`);
   }
 
-  const ctx = parseBeeimMessageEvent(message);
+  const ctx = parseBeeimMessageEvent(message, customMsgParsed);
 
   // ── Access control ──
   if (isP2P) {
@@ -263,11 +270,9 @@ export async function handleBeeimMessage(params: {
   try {
     const core = getBeeimRuntime();
 
-    // For custom messages (type=100), parse the envelope once here.
+    // customMsgParsed was already computed above (single parse for the whole handler).
     // The envelope carries the real business sender/chat ids that must drive
     // session routing, reply targeting, and the HTTP API send.
-    const isCustomMsg = isCustomMessage(message.type) || (message.type as any) === 100;
-    const customMsgParsed = isCustomMsg ? parseCustomMessage(message) : null;
 
     // effectiveSenderId: business-layer sender for P2P (envelope senderId),
     //   falls back to NIM-level message.from for non-custom messages.
@@ -550,49 +555,28 @@ export async function handleBeeimMessage(params: {
         }
 
         if (text) {
-          const isTeamReply =
-            (sessionType === "team" || sessionType === "superTeam") &&
-            message.rawMsg &&
-            ctx.senderId;
+          const isGroup = sessionType === "team" || sessionType === "superTeam";
+          // Resolve the chatId for HTTP API: prefer the envelope chatId (custom
+          // messages), fall back to replyTarget (senderId / team id).
+          const httpChatId =
+            useHttpApi && customMsgParsed?.chatId ? customMsgParsed.chatId : replyTarget;
           const chunks = splitMessageIntoChunks(text, chunkLimit);
 
           for (const chunk of chunks) {
-            if (useHttpApi && customMsgParsed?.chatId) {
-              // Custom messages reply via HTTP API using the envelope chatId.
-              try {
-                log(`[beeim] sending via HTTP API — chatId: ${customMsgParsed.chatId}`);
-                const isGroup = customMsgParsed.chatType === 2;
-                const result = await sendMessageViaHttpApi({
-                  cfg,
-                  chatId: customMsgParsed.chatId,
-                  text: chunk,
-                  accountId,
-                  isGroup,
-                });
-                if (!result.success) {
-                  log(`[beeim] HTTP API send failed — error: ${result.error}`);
-                }
-              } catch (err) {
-                log(`[beeim] HTTP API send error — error: ${String(err)}`);
+            try {
+              log(`[beeim] sending via HTTP API — chatId: ${httpChatId}, isGroup: ${isGroup}`);
+              const result = await sendMessageViaHttpApi({
+                cfg,
+                chatId: httpChatId,
+                text: chunk,
+                accountId,
+                isGroup,
+              });
+              if (!result.success) {
+                log(`[beeim] HTTP API send failed — error: ${result.error}`);
               }
-            } else if (isTeamReply) {
-              await replyMessageBeeim({
-                cfg,
-                to: replyTarget,
-                text: chunk,
-                originalMsg: message.rawMsg,
-                forcePushAccountIds: [ctx.senderId],
-                sessionType,
-                accountId,
-              });
-            } else {
-              await sendMessageBeeim({
-                cfg,
-                to: replyTarget,
-                text: chunk,
-                sessionType,
-                accountId,
-              });
+            } catch (err) {
+              log(`[beeim] HTTP API send error — error: ${String(err)}`);
             }
           }
         }
