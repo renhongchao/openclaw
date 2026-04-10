@@ -18,9 +18,10 @@ export function resolveInstCfg(
   cfg: OpenClawConfig,
   accountId?: string,
 ): BeeimInstanceConfig | null {
-  if (accountId) {
+  if (accountId && accountId !== "default") {
     const acct = resolveBeeimAccountById({ cfg, accountId });
-    return acct.configured ? acct.config : null;
+    if (acct.configured) return acct.config;
+    // accountId provided but not found — fall through to default lookup
   }
   const all = resolveAllBeeimAccounts({ cfg });
   return all.find((a) => a.configured)?.config ?? null;
@@ -265,6 +266,9 @@ export async function sendMessageViaHttpApi(params: {
   const nimCfg = resolveInstCfg(cfg, accountId);
 
   if (!nimCfg) {
+    console.error(
+      `[beeim] sendMessageViaHttpApi — BeeIM channel not configured, accountId: "${accountId ?? "none"}"`,
+    );
     return { success: false, error: "BeeIM channel not configured" };
   }
 

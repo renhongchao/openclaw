@@ -10,8 +10,12 @@ import { splitMessageIntoChunks, resolveInstCfg, sendMessageViaHttpApi } from ".
 import { normalizeBeeimTarget, parseBeeimTarget } from "./targets.js";
 import type { BeeimInstanceConfig } from "./types.js";
 
-/** Default text chunk limit for BeeIM messages */
-const DEFAULT_TEXT_CHUNK_LIMIT = 5000;
+/**
+ * Text chunk limit exposed to core outbound.  Set high so that core does NOT
+ * split messages — sendBeeMessage (http-api.ts) handles its own 1500-char
+ * chunking internally.
+ */
+const CORE_OUTBOUND_CHUNK_LIMIT = 100_000;
 
 /**
  * Outbound send result type
@@ -136,6 +140,12 @@ export async function sendBeeimOutboundText(params: {
       accountId: params.accountId,
       isGroup,
     });
+
+    if (!result.success) {
+      console.error(
+        `[beeim] outbound text send failed — chatId: ${targetId}, error: ${result.error}`,
+      );
+    }
 
     return {
       channel: "beeim",
@@ -271,7 +281,7 @@ export const beeimOutboundConfig = {
   /**
    * Maximum characters per text chunk
    */
-  textChunkLimit: DEFAULT_TEXT_CHUNK_LIMIT,
+  textChunkLimit: CORE_OUTBOUND_CHUNK_LIMIT,
 
   /**
    * Resolve target address from various input formats
@@ -341,18 +351,15 @@ export async function beeimOutbound(params: BeeimOutboundOptions): Promise<void>
   }
 
   if (text) {
-    const chunkLimit = nimCfg?.advanced?.textChunkLimit ?? DEFAULT_TEXT_CHUNK_LIMIT;
-    const chunks = splitMessageIntoChunks(text, chunkLimit);
-
-    for (const chunk of chunks) {
-      const result = await sendBeeimOutboundText({
-        cfg,
-        to: targetId,
-        text: chunk,
-      });
-      if (!result.ok) {
-        throw new Error(result.error || "Failed to send text");
-      }
+    // sendBeeimOutboundText → sendMessageViaHttpApi → sendBeeMessage handles
+    // its own 1500-char chunking, so pass the full text without pre-splitting.
+    const result = await sendBeeimOutboundText({
+      cfg,
+      to: targetId,
+      text,
+    });
+    if (!result.ok) {
+      throw new Error(result.error || "Failed to send text");
     }
   }
 }

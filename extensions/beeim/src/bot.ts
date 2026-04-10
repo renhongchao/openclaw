@@ -30,7 +30,7 @@ import {
 } from "./media.js";
 import { resolveUserNick, resolveTeamName, buildConversationLabel } from "./name-resolver.js";
 import { getBeeimRuntime } from "./runtime.js";
-import { splitMessageIntoChunks, sendStreamMessageBeeim, sendMessageViaHttpApi } from "./send.js";
+import { sendStreamMessageBeeim, sendMessageViaHttpApi } from "./send.js";
 import type {
   BeeimP2pPolicy,
   BeeimTeamPolicy,
@@ -178,6 +178,22 @@ export async function handleBeeimMessage(params: {
   const isCustomMsg = isCustomMessage(message.type) || (message.type as any) === 100;
   const customMsgParsed = isCustomMsg ? parseCustomMessage(message) : null;
 
+  // ── Self-message loop guard ──
+  // When bot replies via HTTP API (from: "beeClaw"), the message is relayed
+  // back through NIM SDK as a custom message.  The NIM-level `from` is a
+  // relay accid (e.g. 101031 / 1652200012), so the monitor.ts self-check
+  // (msg.from === creds.account) does not catch it.  Detect the loop by
+  // comparing the envelope senderId against the configured botPassport.
+  if (isCustomMsg && customMsgParsed?.senderId) {
+    const botPassport = nimCfg?.botPassport?.toLowerCase();
+    if (botPassport && customMsgParsed.senderId.toLowerCase() === botPassport) {
+      log(
+        `[beeim] self-message loop detected — envelope senderId matches botPassport: ${customMsgParsed.senderId}`,
+      );
+      return;
+    }
+  }
+
   if (isTeam) {
     if (!isCustomMsg) {
       const forcePushIds = message.forcePushAccountIds ?? [];
@@ -283,7 +299,14 @@ export async function handleBeeimMessage(params: {
 
     const replyTarget = isTeam ? message.to : effectiveSenderId;
     const beeimFrom = `beeim:${effectiveSenderId}`;
-    const beeimTo = isTeam ? `team:${message.to}` : `user:${effectiveSenderId}`;
+    // For custom messages, use the envelope chatId as the To target so that
+    // both the deliver callback and core outbound route replies to the correct
+    // HTTP API chatId (e.g. beeclaw_1167@bee.163.com), not the senderId.
+    const beeimTo = isTeam
+      ? `team:${message.to}`
+      : useHttpApi && customMsgParsed?.chatId
+        ? `user:${customMsgParsed.chatId}`
+        : `user:${effectiveSenderId}`;
     const peerKind = isTeam ? "group" : "direct";
     const chatType = peerKind;
     // P2P session key is keyed on the business senderId so conversations with
@@ -465,7 +488,6 @@ export async function handleBeeimMessage(params: {
       ...mediaPayload,
     });
 
-    const chunkLimit = nimCfg?.advanced?.textChunkLimit ?? 4000;
     let streamChunkIndex = 0;
     let baseMessage: any = null;
 
@@ -560,24 +582,23 @@ export async function handleBeeimMessage(params: {
           // messages), fall back to replyTarget (senderId / team id).
           const httpChatId =
             useHttpApi && customMsgParsed?.chatId ? customMsgParsed.chatId : replyTarget;
-          const chunks = splitMessageIntoChunks(text, chunkLimit);
 
-          for (const chunk of chunks) {
-            try {
-              log(`[beeim] sending via HTTP API — chatId: ${httpChatId}, isGroup: ${isGroup}`);
-              const result = await sendMessageViaHttpApi({
-                cfg,
-                chatId: httpChatId,
-                text: chunk,
-                accountId,
-                isGroup,
-              });
-              if (!result.success) {
-                log(`[beeim] HTTP API send failed — error: ${result.error}`);
-              }
-            } catch (err) {
-              log(`[beeim] HTTP API send error — error: ${String(err)}`);
+          // sendMessageViaHttpApi → sendBeeMessage handles its own 1500-char
+          // chunking internally, so pass the full text without pre-splitting.
+          try {
+            log(`[beeim] sending via HTTP API — chatId: ${httpChatId}, isGroup: ${isGroup}`);
+            const result = await sendMessageViaHttpApi({
+              cfg,
+              chatId: httpChatId,
+              text,
+              accountId,
+              isGroup,
+            });
+            if (!result.success) {
+              log(`[beeim] HTTP API send failed — error: ${result.error}`);
             }
+          } catch (err) {
+            log(`[beeim] HTTP API send error — error: ${String(err)}`);
           }
         }
       } catch (err) {
