@@ -5,6 +5,8 @@
  * 获取 accessToken 和发送消息的相关代码
  */
 
+import { randomUUID } from "node:crypto";
+
 /**
  * HTTP API URLs 和配置
  */
@@ -197,6 +199,7 @@ export function splitMessageIntoChunks(text: string, maxLength: number = 1500): 
  * @param accid accid（nimToken 第二部分，用于认证）
  * @param token token（nimToken 第三部分，用于认证）
  * @param isRetry 是否为重试（内部使用）
+ * @param _chunkMsgIds 重试时复用的每块 clientMsgId（内部使用）
  */
 export async function sendBeeMessage(
   chatId: string,
@@ -207,6 +210,7 @@ export async function sendBeeMessage(
   isGroup: boolean = false,
   apiBase: string = BEE_API_CONFIG.DEFAULT_API_BASE,
   isRetry: boolean = false,
+  _chunkMsgIds?: string[],
 ): Promise<void> {
   if (!appKey || !accid || !token) {
     throw new Error("[beeim] HTTP API 配置不完整，需要 appKey, accid 和 token");
@@ -219,6 +223,12 @@ export async function sendBeeMessage(
     console.log(`[beeim] 消息过长 (${text.length} 字符)，分割为 ${chunks.length} 块`);
   }
 
+  // 为每个分块生成 clientMsgId，重试时复用相同的 ID 以便服务端去重
+  const chunkMsgIds: string[] =
+    _chunkMsgIds && _chunkMsgIds.length === chunks.length
+      ? _chunkMsgIds
+      : chunks.map(() => randomUUID());
+
   // 获取 accessToken（会自动刷新）- 所有分块只需获取一次
   const accessToken = await getAccessToken(accid, token, apiBase);
 
@@ -227,10 +237,12 @@ export async function sendBeeMessage(
   // 按顺序发送每个分块
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
+    const clientMsgId = chunkMsgIds[i];
 
     // send API payload — appKey 字段使用 accid（与 token 认证保持一致）
     // 群聊用 chatType: "group" + to 键；单聊用 chatType: "single" + chatId 键
     const payload = {
+      clientMsgId,
       from: BEE_API_CONFIG.FIXED_HTTP_FROM,
       appKey: accid,
       accessToken: accessToken,
@@ -248,6 +260,7 @@ export async function sendBeeMessage(
       "[beeim] Payload:",
       JSON.stringify(
         {
+          clientMsgId,
           from: payload.from,
           appKey: payload.appKey,
           accessToken: payload.accessToken ? `${payload.accessToken.substring(0, 8)}****` : "(空)",
@@ -298,10 +311,20 @@ export async function sendBeeMessage(
           throw new Error(`Token 验证失败（已重试）: ${result.message}`);
         }
 
-        // 清除 token 并重试整个发送
+        // 清除 token 并重试整个发送，复用 clientMsgId 以便服务端去重
         console.log("[beeim] 清除 token 并重试...");
         clearAccessToken(accid);
-        await sendBeeMessage(chatId, text, appKey, accid, token, isGroup, apiBase, true);
+        await sendBeeMessage(
+          chatId,
+          text,
+          appKey,
+          accid,
+          token,
+          isGroup,
+          apiBase,
+          true,
+          chunkMsgIds,
+        );
         return; // 成功重试后返回
       }
 
