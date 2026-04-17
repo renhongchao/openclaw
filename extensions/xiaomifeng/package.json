@@ -1,0 +1,68 @@
+{
+  "name": "@openclaw/xiaomifeng",
+  "version": "2026.4.16-3",
+  "description": "OpenClaw XiaoMiFeng IM channel plugin",
+  "files": [
+    "index.ts",
+    "src",
+    "openclaw.plugin.json",
+    "CHANGELOG.md"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@yxim/nim-bot": "^10.9.78"
+  },
+  "devDependencies": {
+    "openclaw": "workspace:*",
+    "zod": "^4.0.0"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.3.30"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "bundledDependencies": [
+    "@yxim/nim-bot"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "xiaomifeng",
+      "label": "XiaoMiFeng",
+      "selectionLabel": "XiaoMiFeng IM",
+      "docsPath": "/channels/xiaomifeng",
+      "docsLabel": "xiaomifeng",
+      "blurb": "XiaoMiFeng IM channel plugin for enterprise messaging.",
+      "aliases": [
+        "xiao-mi-feng",
+        "yunxin"
+      ],
+      "order": 80
+    },
+    "compat": {
+      "pluginApi": ">=2026.4.12"
+    },
+    "build": {
+      "openclawVersion": "2026.4.14-2"
+    },
+    "release": {
+      "publishToClawHub": true
+    },
+    "install": {
+      "npmSpec": "@openclaw/xiaomifeng",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.3.30"
+    },
+    "bundle": {
+      "stageRuntimeDependencies": true
+    }
+  }
+}

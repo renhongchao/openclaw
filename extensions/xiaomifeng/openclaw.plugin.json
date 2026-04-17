@@ -1,0 +1,9 @@
+{
+  "id": "xiaomifeng",
+  "channels": ["xiaomifeng"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
